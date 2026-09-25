@@ -14,12 +14,30 @@ pipeline {
             }
         }
 
-        stage('Maven (feature / develop)') {
+        stage('Maven build') {
             when {
                 not { branch 'master' }
             }
             steps {
-                sh 'mvn clean package'
+                sh 'mvn clean compile'
+            }
+        }
+
+        stage('Maven test') {
+            when {
+                not { branch 'master' }
+            }
+            steps {
+                sh 'mvn test'
+            }
+        }
+
+        stage('Maven package') {
+            when {
+                not { branch 'master' }
+            }
+            steps {
+                sh 'mvn package -DskipTests'
             }
         }
 
@@ -115,8 +133,10 @@ pipeline {
                     // 1) pom → release version
                     sh "mvn -q versions:set -DnewVersion=${releaseVersion} -DgenerateBackupPoms=false"
 
-                    // 2) build & test at release version
-                    sh 'mvn clean package'
+                    // 2) build, test, package at release version
+                    sh 'mvn clean compile'
+                    sh 'mvn test'
+                    sh 'mvn package -DskipTests'
 
                     // 3) docker build & push
                     docker.withRegistry('', 'dockerhub-cred') {
