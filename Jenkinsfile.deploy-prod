@@ -87,16 +87,14 @@ pipeline {
                 KUBECONFIG = credentials('minikube-kubeconfig')
             }
             steps {
-                dir('hello-world') {
-                    sh '''
-                        helm upgrade --install hello-world ./helm/hello-world \
-                          -n hello-world-prod \
-                          -f ./helm/hello-world/values-prod.yaml \
-                          --set image.repository=${DOCKER_IMAGE} \
-                          --set image.tag=${VERSION} \
-                          --create-namespace
-                    '''
-                }
+                sh '''
+                    helm upgrade --install hello-world ./helm/hello-world \
+                      -n hello-world-prod \
+                      -f ./helm/hello-world/values-prod.yaml \
+                      --set image.repository=${DOCKER_IMAGE} \
+                      --set image.tag=${VERSION} \
+                      --create-namespace
+                '''
             }
         }
     }

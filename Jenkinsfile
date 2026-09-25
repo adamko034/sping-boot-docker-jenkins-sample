@@ -19,9 +19,7 @@ pipeline {
                 not { branch 'master' }
             }
             steps {
-                dir('hello-world') {
-                    sh 'mvn clean package'
-                }
+                sh 'mvn clean package'
             }
         }
 
@@ -40,18 +38,16 @@ pipeline {
         stage('Develop: Docker build & push') {
             when { branch 'develop' }
             steps {
-                dir('hello-world') {
-                    script {
-                        env.IMAGE_TAG = sh(
-                            script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
-                            returnStdout: true
-                        ).trim()
-                        echo "Develop image tag: ${env.IMAGE_TAG}"
+                script {
+                    env.IMAGE_TAG = sh(
+                        script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
+                        returnStdout: true
+                    ).trim()
+                    echo "Develop image tag: ${env.IMAGE_TAG}"
 
-                        docker.withRegistry('', 'dockerhub-cred') {
-                            def image = docker.build("${env.DOCKER_IMAGE}:${env.IMAGE_TAG}")
-                            image.push()
-                        }
+                    docker.withRegistry('', 'dockerhub-cred') {
+                        def image = docker.build("${env.DOCKER_IMAGE}:${env.IMAGE_TAG}")
+                        image.push()
                     }
                 }
             }
@@ -63,16 +59,14 @@ pipeline {
                 KUBECONFIG = credentials('minikube-kubeconfig')
             }
             steps {
-                dir('hello-world') {
-                    sh '''
-                        helm upgrade --install hello-world ./helm/hello-world \
-                          -n hello-world-dev \
-                          -f ./helm/hello-world/values-dev.yaml \
-                          --set image.repository=${DOCKER_IMAGE} \
-                          --set image.tag=${IMAGE_TAG} \
-                          --create-namespace
-                    '''
-                }
+                sh '''
+                    helm upgrade --install hello-world ./helm/hello-world \
+                      -n hello-world-dev \
+                      -f ./helm/hello-world/values-dev.yaml \
+                      --set image.repository=${DOCKER_IMAGE} \
+                      --set image.tag=${IMAGE_TAG} \
+                      --create-namespace
+                '''
             }
         }
 
@@ -95,58 +89,53 @@ pipeline {
             when { branch 'master' }
             steps {
                 script {
-                    dir('hello-world') {
-                        def current = sh(
-                            script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
-                            returnStdout: true
-                        ).trim()
+                    def current = sh(
+                        script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
+                        returnStdout: true
+                    ).trim()
 
-                        if (!current.endsWith('-SNAPSHOT')) {
-                            error "Expected a SNAPSHOT version on master, got: ${current}"
-                        }
-
-                        def base = current.replace('-SNAPSHOT', '')
-                        // patch: 0.0.1-SNAPSHOT → release 0.0.1, next 0.0.2-SNAPSHOT
-                        // minor/major: bump base for release, then +patch for next SNAPSHOT
-                        def releaseVersion = (env.BUMP == 'patch') ? base : bumpSemVer(base, env.BUMP)
-                        def nextSnapshot = bumpSemVer(releaseVersion, 'patch') + '-SNAPSHOT'
-
-                        env.RELEASE_VERSION = releaseVersion
-                        env.NEXT_SNAPSHOT = nextSnapshot
-                        env.IMAGE_TAG = releaseVersion
-
-                        echo "Current: ${current}"
-                        echo "Release version: ${releaseVersion}"
-                        echo "Next SNAPSHOT: ${nextSnapshot}"
-
-                        // 1) pom → release version
-                        sh "mvn -q versions:set -DnewVersion=${releaseVersion} -DgenerateBackupPoms=false"
-
-                        // 2) build & test at release version
-                        sh 'mvn clean package'
-
-                        // 3) docker build & push
-                        docker.withRegistry('', 'dockerhub-cred') {
-                            def image = docker.build("${env.DOCKER_IMAGE}:${env.IMAGE_TAG}")
-                            image.push()
-                        }
+                    if (!current.endsWith('-SNAPSHOT')) {
+                        error "Expected a SNAPSHOT version on master, got: ${current}"
                     }
 
-                    // Git at repo root (monorepo)
+                    def base = current.replace('-SNAPSHOT', '')
+                    // patch: 0.0.1-SNAPSHOT → release 0.0.1, next 0.0.2-SNAPSHOT
+                    // minor/major: bump base for release, then +patch for next SNAPSHOT
+                    def releaseVersion = (env.BUMP == 'patch') ? base : bumpSemVer(base, env.BUMP)
+                    def nextSnapshot = bumpSemVer(releaseVersion, 'patch') + '-SNAPSHOT'
+
+                    env.RELEASE_VERSION = releaseVersion
+                    env.NEXT_SNAPSHOT = nextSnapshot
+                    env.IMAGE_TAG = releaseVersion
+
+                    echo "Current: ${current}"
+                    echo "Release version: ${releaseVersion}"
+                    echo "Next SNAPSHOT: ${nextSnapshot}"
+
+                    // 1) pom → release version
+                    sh "mvn -q versions:set -DnewVersion=${releaseVersion} -DgenerateBackupPoms=false"
+
+                    // 2) build & test at release version
+                    sh 'mvn clean package'
+
+                    // 3) docker build & push
+                    docker.withRegistry('', 'dockerhub-cred') {
+                        def image = docker.build("${env.DOCKER_IMAGE}:${env.IMAGE_TAG}")
+                        image.push()
+                    }
+
                     sh """
                         git config user.email 'jenkins@local'
                         git config user.name 'Jenkins'
-                        git add hello-world/pom.xml
+                        git add pom.xml
                         git commit -m "Release ${env.RELEASE_VERSION}" || true
                         git tag -a ${env.RELEASE_VERSION} -m "Release ${env.RELEASE_VERSION}"
                     """
 
-                    dir('hello-world') {
-                        sh "mvn -q versions:set -DnewVersion=${env.NEXT_SNAPSHOT} -DgenerateBackupPoms=false"
-                    }
+                    sh "mvn -q versions:set -DnewVersion=${env.NEXT_SNAPSHOT} -DgenerateBackupPoms=false"
 
                     sh """
-                        git add hello-world/pom.xml
+                        git add pom.xml
                         git commit -m "Prepare next development version ${env.NEXT_SNAPSHOT}"
                     """
 
@@ -172,16 +161,14 @@ pipeline {
                 KUBECONFIG = credentials('minikube-kubeconfig')
             }
             steps {
-                dir('hello-world') {
-                    sh '''
-                        helm upgrade --install hello-world ./helm/hello-world \
-                          -n hello-world-qa \
-                          -f ./helm/hello-world/values-qa.yaml \
-                          --set image.repository=${DOCKER_IMAGE} \
-                          --set image.tag=${IMAGE_TAG} \
-                          --create-namespace
-                    '''
-                }
+                sh '''
+                    helm upgrade --install hello-world ./helm/hello-world \
+                      -n hello-world-qa \
+                      -f ./helm/hello-world/values-qa.yaml \
+                      --set image.repository=${DOCKER_IMAGE} \
+                      --set image.tag=${IMAGE_TAG} \
+                      --create-namespace
+                '''
             }
         }
     }
