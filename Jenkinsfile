@@ -15,27 +15,18 @@ pipeline {
         }
 
         stage('Maven build') {
-            when {
-                not { branch 'master' }
-            }
             steps {
                 sh 'mvn clean compile'
             }
         }
 
         stage('Maven test') {
-            when {
-                not { branch 'master' }
-            }
             steps {
                 sh 'mvn test'
             }
         }
 
         stage('Maven package') {
-            when {
-                not { branch 'master' }
-            }
             steps {
                 sh 'mvn package -DskipTests'
             }
@@ -103,7 +94,7 @@ pipeline {
             }
         }
 
-        stage('Release: versions, build, tag, push') {
+        stage('Release: set version') {
             when { branch 'master' }
             steps {
                 script {
@@ -130,15 +121,23 @@ pipeline {
                     echo "Release version: ${releaseVersion}"
                     echo "Next SNAPSHOT: ${nextSnapshot}"
 
-                    // 1) pom → release version
                     sh "mvn -q versions:set -DnewVersion=${releaseVersion} -DgenerateBackupPoms=false"
+                }
+            }
+        }
 
-                    // 2) build, test, package at release version
-                    sh 'mvn clean compile'
-                    sh 'mvn test'
-                    sh 'mvn package -DskipTests'
+        stage('Release: package') {
+            when { branch 'master' }
+            steps {
+                // Re-package so the jar matches the release version (tests already passed above)
+                sh 'mvn package -DskipTests'
+            }
+        }
 
-                    // 3) docker build & push
+        stage('Release: docker, tag, push') {
+            when { branch 'master' }
+            steps {
+                script {
                     docker.withRegistry('', 'dockerhub-cred') {
                         def image = docker.build("${env.DOCKER_IMAGE}:${env.IMAGE_TAG}")
                         image.push()
