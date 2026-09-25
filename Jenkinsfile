@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
         // Jenkins credential for pushing commits/tags to Git
-        GIT_CREDENTIALS_ID = 'git-cred'
+        GIT_CREDENTIALS_ID = 'github-pat'
     }
 
     stages {
