@@ -1,21 +1,6 @@
 pipeline {
     agent any
 
-    // Declarative parameters → "Build with Parameters" on this job after the first run.
-    // Tag list is refreshed below via properties() for the next run.
-    parameters {
-        choice(
-            name: 'VERSION',
-            choices: ['select'],
-            description: 'Last 10 release tags (refreshed after each run). Leave as select if using CUSTOM_VERSION.'
-        )
-        string(
-            name: 'CUSTOM_VERSION',
-            defaultValue: '',
-            description: 'Optional custom version. Required when VERSION is select.'
-        )
-    }
-
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
     }
@@ -43,13 +28,17 @@ pipeline {
                     }
 
                     def tagList = tags ? tags.split('\n').toList().findAll { it } : []
-                    def choices = (['select'] + tagList)
+                    // choice() needs a newline-separated string (not a Groovy list)
+                    def choicesText = (['select'] + tagList).join('\n')
+                    echo "VERSION choices for next Build with Parameters:\n${choicesText}"
 
+                    // Do NOT use a Declarative parameters{} block — it resets choices to
+                    // ['select'] on every run and wipes the tag list from the previous build.
                     properties([
                         parameters([
                             choice(
                                 name: 'VERSION',
-                                choices: choices,
+                                choices: choicesText,
                                 description: 'Last 10 release tags. Leave as "select" if you enter a custom version below.'
                             ),
                             string(
@@ -83,7 +72,7 @@ pipeline {
                     } else if (selected && selected != 'select') {
                         version = selected
                     } else {
-                        error 'Version required: use Build with Parameters — choose a VERSION tag, or enter CUSTOM_VERSION. "select" is not valid.'
+                        error 'Version required: use Build with Parameters — choose a VERSION tag, or enter CUSTOM_VERSION. "select" is not valid. If the dropdown was empty, run Build Now once, then use Build with Parameters again.'
                     }
 
                     env.VERSION = version
