@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    // Don't build on Multibranch indexing (Jenkins restart / CasC job re-seed).
+    // Manual "Build" and SCM webhooks still work.
+    options {
+        overrideIndexTriggers(false)
+    }
+
     // Used on master (Build with Parameters). Ignored on feature/develop.
     parameters {
         choice(
