@@ -1,0 +1,11 @@
+# QA environment overrides
+name: QA
+springProfile: qa
+
+replicaCount: 1
+
+image:
+  tag: "0.0.1"
+
+service:
+  type: ClusterIP
