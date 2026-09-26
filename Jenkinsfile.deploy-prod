@@ -16,18 +16,18 @@ pipeline {
                     sh 'git fetch --tags --force'
 
                     def tags = sh(
-                        script: "git tag -l '[0-9]*' --sort=-v:refname | head -10",
+                        script: "git tag -l '[0-9]*' --sort=-v:refname | grep -v '\\-SNAPSHOT\$' | head -10",
                         returnStdout: true
                     ).trim()
 
                     if (!tags) {
                         tags = sh(
-                            script: "git tag -l 'v[0-9]*' --sort=-v:refname | head -10 | sed 's/^v//'",
+                            script: "git tag -l 'v[0-9]*' --sort=-v:refname | grep -v '\\-SNAPSHOT\$' | head -10 | sed 's/^v//'",
                             returnStdout: true
                         ).trim()
                     }
 
-                    def tagList = tags ? tags.split('\n').toList().findAll { it } : []
+                    def tagList = tags ? tags.split('\n').toList().findAll { it && !it.endsWith('-SNAPSHOT') } : []
                     // choice() needs a newline-separated string (not a Groovy list)
                     def choicesText = (['select'] + tagList).join('\n')
                     echo "VERSION choices for next Build with Parameters:\n${choicesText}"
@@ -39,12 +39,12 @@ pipeline {
                             choice(
                                 name: 'VERSION',
                                 choices: choicesText,
-                                description: 'Last 10 release tags. Leave as "select" if you enter a custom version below.'
+                                description: 'Last 10 release tags (no SNAPSHOT). Leave as "select" if you enter a custom version below.'
                             ),
                             string(
                                 name: 'CUSTOM_VERSION',
                                 defaultValue: '',
-                                description: 'Optional custom version. Required when VERSION is "select".'
+                                description: 'Optional custom version (no SNAPSHOT). Required when VERSION is "select".'
                             )
                         ])
                     ])
@@ -73,6 +73,10 @@ pipeline {
                         version = selected
                     } else {
                         error 'Version required: use Build with Parameters — choose a VERSION tag, or enter CUSTOM_VERSION. "select" is not valid. If the dropdown was empty, run Build Now once, then use Build with Parameters again.'
+                    }
+
+                    if (version.endsWith('-SNAPSHOT')) {
+                        error "SNAPSHOT versions are not allowed for PROD: ${version}"
                     }
 
                     env.VERSION = version
