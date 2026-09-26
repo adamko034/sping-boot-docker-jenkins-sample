@@ -1,0 +1,28 @@
+replicaCount: 1
+
+image:
+  repository: hello-world
+  pullPolicy: IfNotPresent
+
+name: default
+springProfile: default
+
+service:
+  type: ClusterIP
+  port: 1234
+
+containerPort: 1234
+
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+resources: {}
+
+nodeSelector: {}
