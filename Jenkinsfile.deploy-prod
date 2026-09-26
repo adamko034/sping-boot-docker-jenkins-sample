@@ -1,6 +1,21 @@
 pipeline {
     agent any
 
+    // Declarative parameters → "Build with Parameters" on this job after the first run.
+    // Tag list is refreshed below via properties() for the next run.
+    parameters {
+        choice(
+            name: 'VERSION',
+            choices: ['select'],
+            description: 'Last 10 release tags (refreshed after each run). Leave as select if using CUSTOM_VERSION.'
+        )
+        string(
+            name: 'CUSTOM_VERSION',
+            defaultValue: '',
+            description: 'Optional custom version. Required when VERSION is select.'
+        )
+    }
+
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
     }
@@ -30,7 +45,6 @@ pipeline {
                     def tagList = tags ? tags.split('\n').toList().findAll { it } : []
                     def choices = (['select'] + tagList)
 
-                    // Refresh Build with Parameters for the next run
                     properties([
                         parameters([
                             choice(
@@ -69,7 +83,7 @@ pipeline {
                     } else if (selected && selected != 'select') {
                         version = selected
                     } else {
-                        error 'Version required: choose a tag from VERSION, or enter CUSTOM_VERSION. "select" is not a valid version.'
+                        error 'Version required: use Build with Parameters — choose a VERSION tag, or enter CUSTOM_VERSION. "select" is not valid.'
                     }
 
                     env.VERSION = version
