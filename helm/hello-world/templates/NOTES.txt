@@ -1,9 +1,0 @@
-1. Port-forward to reach /api/hello:
-
-   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "hello-world.fullname" . }} 1234:{{ .Values.service.port }}
-
-2. Open:
-
-   http://127.0.0.1:1234/api/hello
-
-   Expected response: Hello {{ .Values.name }}
