@@ -1,6 +1,16 @@
 pipeline {
     agent any
 
+    // Required for Multibranch: Declarative parameters make "Build with Parameters"
+    // appear on the branch job after the first run of that branch.
+    parameters {
+        choice(
+            name: 'BUMP',
+            choices: ['patch', 'minor', 'major'],
+            description: 'Release bump (used only on master).'
+        )
+    }
+
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
         // Jenkins credential for pushing commits/tags to Git
@@ -12,21 +22,20 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Parameterized bump only on master (each Multibranch job is per-branch).
-                    // Choices are refreshed for the *next* Build with Parameters from current pom.
+                    // Refresh master choices with concrete versions for the *next* build.
                     if (env.BRANCH_NAME == 'master') {
                         def current = sh(
                             script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
                             returnStdout: true
                         ).trim()
                         def choices = bumpChoicesForSnapshot(current)
-                        echo "Next release parameter choices (from ${current}): ${choices}"
+                        echo "BUMP param for next master build (from ${current}): ${choices}"
                         properties([
                             parameters([
                                 choice(
                                     name: 'BUMP',
                                     choices: choices,
-                                    description: "Release version from current ${current}. Applies on the next master build."
+                                    description: "Release version from current ${current}."
                                 )
                             ])
                         ])
