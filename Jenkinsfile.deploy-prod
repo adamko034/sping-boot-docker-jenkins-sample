@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        string(
+            name: 'VERSION',
+            defaultValue: '',
+            description: 'Released version to deploy to PROD (e.g. 0.0.4). No SNAPSHOT.'
+        )
+    }
+
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
     }
@@ -13,44 +21,12 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    sh 'git fetch --tags --force'
-
-                    def tags = sh(
-                        script: "git tag -l '[0-9]*' --sort=-v:refname | grep -v '\\-SNAPSHOT\$' | head -10",
-                        returnStdout: true
-                    ).trim()
-
-                    if (!tags) {
-                        tags = sh(
-                            script: "git tag -l 'v[0-9]*' --sort=-v:refname | grep -v '\\-SNAPSHOT\$' | head -10 | sed 's/^v//'",
-                            returnStdout: true
-                        ).trim()
+                    def version = params.VERSION?.trim()
+                    if (!version) {
+                        error 'VERSION is required. Use Build with Parameters and enter a release version (e.g. 0.0.4).'
                     }
-
-                    def tagList = tags ? tags.split('\n').toList().findAll { it && !it.endsWith('-SNAPSHOT') } : []
-                    // choice() needs a newline-separated string (not a Groovy list)
-                    def choicesText = (['select'] + tagList).join('\n')
-                    echo "VERSION choices for next Build with Parameters:\n${choicesText}"
-
-                    // Do NOT use a Declarative parameters{} block — it resets choices to
-                    // ['select'] on every run and wipes the tag list from the previous build.
-                    properties([
-                        parameters([
-                            choice(
-                                name: 'VERSION',
-                                choices: choicesText,
-                                description: 'Last 10 release tags (no SNAPSHOT). Leave as "select" if you enter a custom version below.'
-                            ),
-                            string(
-                                name: 'CUSTOM_VERSION',
-                                defaultValue: '',
-                                description: 'Optional custom version (no SNAPSHOT). Required when VERSION is "select".'
-                            )
-                        ])
-                    ])
-
-                    if (!tagList && !(params.CUSTOM_VERSION?.trim())) {
-                        error 'No release tags found and no CUSTOM_VERSION provided. Run a release job first.'
+                    if (version.endsWith('-SNAPSHOT')) {
+                        error "SNAPSHOT versions are not allowed for PROD: ${version}"
                     }
 
                     def currentProd = sh(
@@ -62,24 +38,8 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     env.CURRENT_PROD_VERSION = currentProd ?: 'none'
-
-                    def custom = params.CUSTOM_VERSION?.trim()
-                    def selected = params.VERSION?.trim()
-                    def version
-
-                    if (custom) {
-                        version = custom
-                    } else if (selected && selected != 'select') {
-                        version = selected
-                    } else {
-                        error 'Version required: use Build with Parameters — choose a VERSION tag, or enter CUSTOM_VERSION. "select" is not valid. If the dropdown was empty, run Build Now once, then use Build with Parameters again.'
-                    }
-
-                    if (version.endsWith('-SNAPSHOT')) {
-                        error "SNAPSHOT versions are not allowed for PROD: ${version}"
-                    }
-
                     env.VERSION = version
+
                     echo "Current PROD version: ${env.CURRENT_PROD_VERSION}"
                     echo "Will deploy version: ${env.VERSION}"
                 }

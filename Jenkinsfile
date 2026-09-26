@@ -1,19 +1,17 @@
 pipeline {
     agent any
 
-    // Required for Multibranch: Declarative parameters make "Build with Parameters"
-    // appear on the branch job after the first run of that branch.
+    // Used on master (Build with Parameters). Ignored on feature/develop.
     parameters {
         choice(
             name: 'BUMP',
-            choices: ['patch', 'minor', 'major'],
-            description: 'Release bump (used only on master).'
+            choices: ['none', 'patch', 'minor', 'major'],
+            description: 'Master only: none = Checkout + Maven (no release). patch/minor/major = release from current pom SNAPSHOT.'
         )
     }
 
     environment {
         DOCKER_IMAGE = 'adamko034/hello-world'
-        // Jenkins credential for pushing commits/tags to Git
         GIT_CREDENTIALS_ID = 'github-pat'
     }
 
@@ -21,26 +19,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                script {
-                    // Refresh master choices with concrete versions for the *next* build.
-                    if (env.BRANCH_NAME == 'master') {
-                        def current = sh(
-                            script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
-                            returnStdout: true
-                        ).trim()
-                        def choices = bumpChoicesForSnapshot(current)
-                        echo "BUMP param for next master build (from ${current}): ${choices}"
-                        properties([
-                            parameters([
-                                choice(
-                                    name: 'BUMP',
-                                    choices: choices,
-                                    description: "Release version from current ${current}."
-                                )
-                            ])
-                        ])
-                    }
-                }
             }
         }
 
@@ -59,6 +37,18 @@ pipeline {
         stage('Maven package') {
             steps {
                 sh 'mvn package -DskipTests'
+            }
+        }
+
+        stage('Master: skip release') {
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() == 'none' }
+                }
+            }
+            steps {
+                echo 'BUMP=none — skipping release/docker/QA/sync.'
             }
         }
 
@@ -110,11 +100,16 @@ pipeline {
         }
 
         stage('Release: set version') {
-            when { branch 'master' }
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() != 'none' }
+                }
+            }
             steps {
                 script {
-                    def bump = bumpTypeFromParam(params.BUMP)
-                    echo "Release bump: ${bump} (param=${params.BUMP})"
+                    def bump = releaseBump()
+                    echo "Release bump: ${bump}"
 
                     def current = sh(
                         script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
@@ -126,8 +121,7 @@ pipeline {
                     }
 
                     def base = current.replace('-SNAPSHOT', '')
-                    // patch: 0.0.1-SNAPSHOT → release 0.0.1, next 0.0.2-SNAPSHOT
-                    // minor/major: bump base for release, then +patch for next SNAPSHOT
+                    // patch: 0.0.4-SNAPSHOT → 0.0.4; minor/major bump base first
                     def releaseVersion = (bump == 'patch') ? base : bumpSemVer(base, bump)
                     def nextSnapshot = bumpSemVer(releaseVersion, 'patch') + '-SNAPSHOT'
 
@@ -145,15 +139,24 @@ pipeline {
         }
 
         stage('Release: package') {
-            when { branch 'master' }
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() != 'none' }
+                }
+            }
             steps {
-                // Re-package so the jar matches the release version (tests already passed above)
                 sh 'mvn package -DskipTests'
             }
         }
 
         stage('Release: docker, tag, push') {
-            when { branch 'master' }
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() != 'none' }
+                }
+            }
             steps {
                 script {
                     docker.withRegistry('', 'dockerhub-cred') {
@@ -193,7 +196,12 @@ pipeline {
         }
 
         stage('Release: Deploy QA') {
-            when { branch 'master' }
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() != 'none' }
+                }
+            }
             environment {
                 KUBECONFIG = credentials('minikube-kubeconfig')
             }
@@ -210,7 +218,12 @@ pipeline {
         }
 
         stage('Release: sync master → develop') {
-            when { branch 'master' }
+            when {
+                allOf {
+                    branch 'master'
+                    expression { releaseBump() != 'none' }
+                }
+            }
             steps {
                 script {
                     withCredentials([usernamePassword(
@@ -259,6 +272,11 @@ pipeline {
     }
 }
 
+def releaseBump() {
+    def bump = params.BUMP?.trim()
+    return bump in ['none', 'patch', 'minor', 'major'] ? bump : 'none'
+}
+
 def bumpSemVer(String version, String bumpType) {
     def parts = version.tokenize('.').collect { it as int }
     while (parts.size() < 3) {
@@ -275,23 +293,4 @@ def bumpSemVer(String version, String bumpType) {
         parts[2]++
     }
     return parts.join('.')
-}
-
-/** Choice labels for Build with Parameters, e.g. patch (0.0.1), minor (0.1.0), major (1.0.0). */
-def bumpChoicesForSnapshot(String current) {
-    def base = current.replace('-SNAPSHOT', '')
-    return [
-        "patch (${base})",
-        "minor (${bumpSemVer(base, 'minor')})",
-        "major (${bumpSemVer(base, 'major')})"
-    ]
-}
-
-/** Accepts "patch", "minor", "major", or "patch (0.0.1)". */
-def bumpTypeFromParam(String bumpParam) {
-    if (!bumpParam) {
-        return 'patch'
-    }
-    def type = bumpParam.trim().tokenize(' ')[0]
-    return type in ['patch', 'minor', 'major'] ? type : 'patch'
 }
