@@ -11,6 +11,27 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    // Parameterized bump only on master (each Multibranch job is per-branch).
+                    // Choices are refreshed for the *next* Build with Parameters from current pom.
+                    if (env.BRANCH_NAME == 'master') {
+                        def current = sh(
+                            script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
+                            returnStdout: true
+                        ).trim()
+                        def choices = bumpChoicesForSnapshot(current)
+                        echo "Next release parameter choices (from ${current}): ${choices}"
+                        properties([
+                            parameters([
+                                choice(
+                                    name: 'BUMP',
+                                    choices: choices,
+                                    description: "Release version from current ${current}. Applies on the next master build."
+                                )
+                            ])
+                        ])
+                    }
+                }
             }
         }
 
@@ -79,25 +100,13 @@ pipeline {
             }
         }
 
-        stage('Release: choose bump') {
-            when { branch 'master' }
-            steps {
-                script {
-                    def bump = input(
-                        message: 'Select release bump. patch = release current base (e.g. 0.0.1-SNAPSHOT → 0.0.1). minor/major bump the release version.',
-                        parameters: [
-                            choice(name: 'BUMP', choices: ['patch', 'minor', 'major'])
-                        ]
-                    )
-                    env.BUMP = bump instanceof Map ? bump.BUMP : bump
-                }
-            }
-        }
-
         stage('Release: set version') {
             when { branch 'master' }
             steps {
                 script {
+                    def bump = bumpTypeFromParam(params.BUMP)
+                    echo "Release bump: ${bump} (param=${params.BUMP})"
+
                     def current = sh(
                         script: "mvn -q -DforceStdout help:evaluate -Dexpression=project.version",
                         returnStdout: true
@@ -110,7 +119,7 @@ pipeline {
                     def base = current.replace('-SNAPSHOT', '')
                     // patch: 0.0.1-SNAPSHOT → release 0.0.1, next 0.0.2-SNAPSHOT
                     // minor/major: bump base for release, then +patch for next SNAPSHOT
-                    def releaseVersion = (env.BUMP == 'patch') ? base : bumpSemVer(base, env.BUMP)
+                    def releaseVersion = (bump == 'patch') ? base : bumpSemVer(base, bump)
                     def nextSnapshot = bumpSemVer(releaseVersion, 'patch') + '-SNAPSHOT'
 
                     env.RELEASE_VERSION = releaseVersion
@@ -190,6 +199,54 @@ pipeline {
                 '''
             }
         }
+
+        stage('Release: sync master → develop') {
+            when { branch 'master' }
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: env.GIT_CREDENTIALS_ID,
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
+                    )]) {
+                        def synced = sh(
+                            script: '''
+                                set +x
+                                REMOTE_PATH=$(git config --get remote.origin.url | sed -E 's#https?://##' | sed -E 's#git@([^:]+):#\\1/#')
+                                AUTH_URL="https://${GIT_USER}:${GIT_PASS}@${REMOTE_PATH}"
+
+                                git config user.email 'jenkins@local'
+                                git config user.name 'Jenkins'
+
+                                git fetch "${AUTH_URL}" +refs/heads/master:refs/remotes/origin/master \
+                                                      +refs/heads/develop:refs/remotes/origin/develop
+
+                                git checkout -B develop origin/develop
+
+                                set +e
+                                git merge origin/master -m "Merge master into develop after release ${RELEASE_VERSION}"
+                                MERGE_STATUS=$?
+                                set -e
+
+                                if [ "$MERGE_STATUS" -ne 0 ]; then
+                                    git merge --abort 2>/dev/null || true
+                                    echo "ERROR: Conflict merging master into develop after release ${RELEASE_VERSION}."
+                                    echo "Resolve manually: checkout develop, merge master, fix conflicts (usually pom.xml), push develop."
+                                    exit 1
+                                fi
+
+                                git push "${AUTH_URL}" HEAD:develop
+                            ''',
+                            returnStatus: true
+                        )
+                        if (synced != 0) {
+                            error "Failed to sync master → develop after release ${env.RELEASE_VERSION}. Resolve merge conflicts on develop manually."
+                        }
+                        echo "Synced master → develop after release ${env.RELEASE_VERSION}"
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -209,4 +266,23 @@ def bumpSemVer(String version, String bumpType) {
         parts[2]++
     }
     return parts.join('.')
+}
+
+/** Choice labels for Build with Parameters, e.g. patch (0.0.1), minor (0.1.0), major (1.0.0). */
+def bumpChoicesForSnapshot(String current) {
+    def base = current.replace('-SNAPSHOT', '')
+    return [
+        "patch (${base})",
+        "minor (${bumpSemVer(base, 'minor')})",
+        "major (${bumpSemVer(base, 'major')})"
+    ]
+}
+
+/** Accepts "patch", "minor", "major", or "patch (0.0.1)". */
+def bumpTypeFromParam(String bumpParam) {
+    if (!bumpParam) {
+        return 'patch'
+    }
+    def type = bumpParam.trim().tokenize(' ')[0]
+    return type in ['patch', 'minor', 'major'] ? type : 'patch'
 }
