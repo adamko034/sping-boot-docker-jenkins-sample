@@ -199,6 +199,54 @@ pipeline {
                 '''
             }
         }
+
+        stage('Release: sync master → develop') {
+            when { branch 'master' }
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: env.GIT_CREDENTIALS_ID,
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
+                    )]) {
+                        def synced = sh(
+                            script: '''
+                                set +x
+                                REMOTE_PATH=$(git config --get remote.origin.url | sed -E 's#https?://##' | sed -E 's#git@([^:]+):#\\1/#')
+                                AUTH_URL="https://${GIT_USER}:${GIT_PASS}@${REMOTE_PATH}"
+
+                                git config user.email 'jenkins@local'
+                                git config user.name 'Jenkins'
+
+                                git fetch "${AUTH_URL}" +refs/heads/master:refs/remotes/origin/master \
+                                                      +refs/heads/develop:refs/remotes/origin/develop
+
+                                git checkout -B develop origin/develop
+
+                                set +e
+                                git merge origin/master -m "Merge master into develop after release ${RELEASE_VERSION}"
+                                MERGE_STATUS=$?
+                                set -e
+
+                                if [ "$MERGE_STATUS" -ne 0 ]; then
+                                    git merge --abort 2>/dev/null || true
+                                    echo "ERROR: Conflict merging master into develop after release ${RELEASE_VERSION}."
+                                    echo "Resolve manually: checkout develop, merge master, fix conflicts (usually pom.xml), push develop."
+                                    exit 1
+                                fi
+
+                                git push "${AUTH_URL}" HEAD:develop
+                            ''',
+                            returnStatus: true
+                        )
+                        if (synced != 0) {
+                            error "Failed to sync master → develop after release ${env.RELEASE_VERSION}. Resolve merge conflicts on develop manually."
+                        }
+                        echo "Synced master → develop after release ${env.RELEASE_VERSION}"
+                    }
+                }
+            }
+        }
     }
 }
 

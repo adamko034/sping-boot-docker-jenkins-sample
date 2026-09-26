@@ -6,7 +6,7 @@ pipeline {
     }
 
     stages {
-        stage('Fetch versions') {
+        stage('Resolve version') {
             environment {
                 KUBECONFIG = credentials('minikube-kubeconfig')
             }
@@ -16,19 +16,38 @@ pipeline {
                     sh 'git fetch --tags --force'
 
                     def tags = sh(
-                        script: "git tag -l '[0-9]*' --sort=-v:refname | head -20",
+                        script: "git tag -l '[0-9]*' --sort=-v:refname | head -10",
                         returnStdout: true
                     ).trim()
 
                     if (!tags) {
                         tags = sh(
-                            script: "git tag -l 'v[0-9]*' --sort=-v:refname | head -20 | sed 's/^v//'",
+                            script: "git tag -l 'v[0-9]*' --sort=-v:refname | head -10 | sed 's/^v//'",
                             returnStdout: true
                         ).trim()
                     }
 
-                    if (!tags) {
-                        error 'No release tags found. Run a release job first.'
+                    def tagList = tags ? tags.split('\n').toList().findAll { it } : []
+                    def choices = (['select'] + tagList)
+
+                    // Refresh Build with Parameters for the next run
+                    properties([
+                        parameters([
+                            choice(
+                                name: 'VERSION',
+                                choices: choices,
+                                description: 'Last 10 release tags. Leave as "select" if you enter a custom version below.'
+                            ),
+                            string(
+                                name: 'CUSTOM_VERSION',
+                                defaultValue: '',
+                                description: 'Optional custom version. Required when VERSION is "select".'
+                            )
+                        ])
+                    ])
+
+                    if (!tagList && !(params.CUSTOM_VERSION?.trim())) {
+                        error 'No release tags found and no CUSTOM_VERSION provided. Run a release job first.'
                     }
 
                     def currentProd = sh(
@@ -39,36 +58,23 @@ pipeline {
                         ''',
                         returnStdout: true
                     ).trim()
+                    env.CURRENT_PROD_VERSION = currentProd ?: 'none'
 
-                    if (!currentProd) {
-                        currentProd = 'none'
+                    def custom = params.CUSTOM_VERSION?.trim()
+                    def selected = params.VERSION?.trim()
+                    def version
+
+                    if (custom) {
+                        version = custom
+                    } else if (selected && selected != 'select') {
+                        version = selected
+                    } else {
+                        error 'Version required: choose a tag from VERSION, or enter CUSTOM_VERSION. "select" is not a valid version.'
                     }
-                    env.CURRENT_PROD_VERSION = currentProd
-                    echo "Current PROD version: ${currentProd}"
 
-                    def choices = tags.split('\n').toList().findAll { it && it != currentProd }
-
-                    if (choices.isEmpty()) {
-                        error "No other versions available to deploy (current PROD is ${currentProd})."
-                    }
-
-                    env.RELEASE_TAGS = choices.join('\n')
-                    echo "Selectable versions (newest first):\n${env.RELEASE_TAGS}"
-                }
-            }
-        }
-
-        stage('Select version') {
-            steps {
-                script {
-                    def choices = env.RELEASE_TAGS.split('\n').toList()
-                    def selected = input(
-                        message: "Current prod version is ${env.CURRENT_PROD_VERSION}. Select version to deploy:",
-                        parameters: [
-                            choice(name: 'VERSION', choices: choices)
-                        ]
-                    )
-                    env.VERSION = selected instanceof Map ? selected.VERSION : selected
+                    env.VERSION = version
+                    echo "Current PROD version: ${env.CURRENT_PROD_VERSION}"
+                    echo "Will deploy version: ${env.VERSION}"
                 }
             }
         }
@@ -78,7 +84,7 @@ pipeline {
                 timeout(time: 1, unit: 'HOURS')
             }
             steps {
-                input message: "Current prod version is ${env.CURRENT_PROD_VERSION}. You are about to deploy ${env.VERSION}. Proceed?"
+                input message: "Deploy version ${env.VERSION} to PROD? (current PROD: ${env.CURRENT_PROD_VERSION})"
             }
         }
 
