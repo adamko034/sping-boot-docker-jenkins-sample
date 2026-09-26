@@ -2,5 +2,6 @@
 
 microserviceCi(
     app: 'hello-world',
-    image: 'adamko034/hello-world'
+    image: 'adamko034/hello-world',
+    namespace: 'hello-world-dev'
 )
