@@ -13,7 +13,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>hello-world</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4-SNAPSHOT</version>
     <name>hello-world</name>
 
     <properties>
